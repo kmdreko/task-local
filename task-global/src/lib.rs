@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell, RefMut};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -6,8 +6,40 @@ use std::thread::LocalKey;
 
 use pin_project::pin_project;
 
-pub trait TaskGlobal: Sized {
+pub trait TaskGlobal: Sized + 'static {
     fn key() -> &'static LocalKey<TaskGlobalStorage<Self>>;
+
+    fn try_global<F, R>(f: F) -> R
+    where
+        F: FnOnce(Option<&Self>) -> R,
+    {
+        Self::key().with(|storage| f(storage.current().as_deref()))
+    }
+
+    fn try_global_mut<F, R>(f: F) -> R
+    where
+        F: FnOnce(Option<&mut Self>) -> R,
+    {
+        Self::key().with(|storage| f(storage.current_mut().as_deref_mut()))
+    }
+
+    fn global<F, R>(f: F) -> R
+    where
+        F: FnOnce(&Self) -> R,
+    {
+        Self::try_global(|maybe_current| {
+            f(maybe_current.expect("no value stored in task global storage"))
+        })
+    }
+
+    fn global_mut<F, R>(f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        Self::try_global_mut(|maybe_current| {
+            f(maybe_current.expect("no value stored in task global storage"))
+        })
+    }
 }
 
 pub struct TaskGlobalIter /*<T>*/ {}
@@ -44,13 +76,25 @@ where
     }
 }
 
-#[allow(unused)]
 pub struct TaskGlobalStorage<T> {
     head: RefCell<Option<Box<TaskGlobalNode<T>>>>,
 }
 
-#[allow(unused)]
 impl<T> TaskGlobalStorage<T> {
+    fn current(&self) -> Option<Ref<'_, T>> {
+        Ref::filter_map(self.head.borrow(), |head| {
+            head.as_ref().map(|node| &node.value)
+        })
+        .ok()
+    }
+
+    fn current_mut(&self) -> Option<RefMut<'_, T>> {
+        RefMut::filter_map(self.head.borrow_mut(), |head| {
+            head.as_mut().map(|node| &mut node.value)
+        })
+        .ok()
+    }
+
     fn push(&self, mut node: Box<TaskGlobalNode<T>>) {
         let mut head = self.head.borrow_mut();
         node.parent = head.take();
@@ -73,13 +117,11 @@ impl<T> Default for TaskGlobalStorage<T> {
     }
 }
 
-#[allow(unused)]
 struct TaskGlobalNode<T> {
     value: T,
     parent: Option<Box<TaskGlobalNode<T>>>,
 }
 
-#[allow(unused)]
 impl<T> TaskGlobalNode<T> {
     fn new(value: T) -> TaskGlobalNode<T> {
         TaskGlobalNode {
@@ -89,13 +131,11 @@ impl<T> TaskGlobalNode<T> {
     }
 }
 
-#[allow(unused)]
 struct TaskGlobalNodeGuard<'a, T: 'static> {
     key: &'static LocalKey<TaskGlobalStorage<T>>,
     current: &'a mut Option<Box<TaskGlobalNode<T>>>,
 }
 
-#[allow(unused)]
 impl<'a, T: 'static> TaskGlobalNodeGuard<'a, T> {
     fn new(
         key: &'static LocalKey<TaskGlobalStorage<T>>,
@@ -167,5 +207,31 @@ mod tests {
         )
         .await;
         assert!(STORAGE.with(|storage| storage.head.borrow().is_none()));
+    }
+
+    #[tokio::test]
+    async fn task_global_trait_accesses_value() {
+        struct Context;
+        impl TaskGlobal for Context {
+            fn key() -> &'static LocalKey<TaskGlobalStorage<Self>> {
+                thread_local!(static STORAGE: TaskGlobalStorage<Context> = TaskGlobalStorage::default());
+                &STORAGE
+            }
+        }
+
+        assert!(Context::try_global(|context| context.is_none()));
+        assert!(Context::try_global_mut(|context| context.is_none()));
+        TaskGlobalFuture::new(
+            async {
+                assert!(Context::try_global(|context| context.is_some()));
+                assert!(Context::try_global_mut(|context| context.is_some()));
+                assert!(Context::global(|context| matches!(context, Context)));
+                assert!(Context::global_mut(|context| matches!(context, Context)));
+            },
+            Context,
+        )
+        .await;
+        assert!(Context::try_global(|context| context.is_none()));
+        assert!(Context::try_global_mut(|context| context.is_none()));
     }
 }
