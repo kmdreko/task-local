@@ -1,4 +1,9 @@
-pub trait TaskGlobal {}
+use std::cell::RefCell;
+use std::thread::LocalKey;
+
+pub trait TaskGlobal: Sized {
+    fn key() -> &'static LocalKey<TaskGlobalStorage<Self>>;
+}
 
 pub struct TaskGlobalIter /*<T>*/ {}
 
@@ -8,26 +13,30 @@ pub struct TaskGlobalFuture /*<F, T>*/ {}
 
 #[allow(unused)]
 pub struct TaskGlobalStorage<T> {
-    head: Option<Box<TaskGlobalNode<T>>>,
+    head: RefCell<Option<Box<TaskGlobalNode<T>>>>,
 }
 
 #[allow(unused)]
 impl<T> TaskGlobalStorage<T> {
-    fn push(&mut self, mut node: Box<TaskGlobalNode<T>>) {
-        node.parent = self.head.take();
-        self.head = Some(node);
+    fn push(&self, mut node: Box<TaskGlobalNode<T>>) {
+        let mut head = self.head.borrow_mut();
+        node.parent = head.take();
+        *head = Some(node);
     }
 
-    fn pop(&mut self) -> Option<Box<TaskGlobalNode<T>>> {
-        let mut node = self.head.take();
-        self.head = node.as_mut().and_then(|node| node.parent.take());
+    fn pop(&self) -> Option<Box<TaskGlobalNode<T>>> {
+        let mut head = self.head.borrow_mut();
+        let mut node = head.take();
+        *head = node.as_mut().and_then(|node| node.parent.take());
         node
     }
 }
 
 impl<T> Default for TaskGlobalStorage<T> {
     fn default() -> Self {
-        Self { head: None }
+        Self {
+            head: RefCell::new(None),
+        }
     }
 }
 
@@ -56,7 +65,7 @@ mod tests {
 
     #[test]
     fn storage_can_push_and_pop() {
-        let mut storage = TaskGlobalStorage::default();
+        let storage = TaskGlobalStorage::default();
 
         storage.push(Box::new(TaskGlobalNode::new(1)));
         storage.push(Box::new(TaskGlobalNode::new(2)));
