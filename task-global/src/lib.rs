@@ -1,14 +1,13 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
+pub trait TaskGlobal {}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub struct TaskGlobalIter /*<T>*/ {}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub struct TaskGlobalIterMut /*<T>*/ {}
+
+pub struct TaskGlobalFuture /*<F, T>*/ {}
+
+#[allow(unused)]
+struct TaskGlobalNode /*<T>*/ {}
+
+#[allow(unused)]
+struct TaskGlobalNodeGuard /*<T>*/ {}
