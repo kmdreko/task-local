@@ -1,5 +1,10 @@
 use std::cell::RefCell;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::thread::LocalKey;
+
+use pin_project::pin_project;
 
 pub trait TaskGlobal: Sized {
     fn key() -> &'static LocalKey<TaskGlobalStorage<Self>>;
@@ -9,7 +14,35 @@ pub struct TaskGlobalIter /*<T>*/ {}
 
 pub struct TaskGlobalIterMut /*<T>*/ {}
 
-pub struct TaskGlobalFuture /*<F, T>*/ {}
+#[pin_project]
+pub struct TaskGlobalFuture<Fut, T> {
+    #[pin]
+    inner: Fut,
+    value: Option<Box<TaskGlobalNode<T>>>,
+}
+
+impl<Fut, T> TaskGlobalFuture<Fut, T> {
+    pub fn new(inner: Fut, value: T) -> TaskGlobalFuture<Fut, T> {
+        TaskGlobalFuture {
+            inner,
+            value: Some(Box::new(TaskGlobalNode::new(value))),
+        }
+    }
+}
+
+impl<Fut, T> Future for TaskGlobalFuture<Fut, T>
+where
+    Fut: Future,
+    T: TaskGlobal + 'static,
+{
+    type Output = Fut::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+        let _guard = TaskGlobalNodeGuard::new(T::key(), &mut this.value);
+        this.inner.poll(cx)
+    }
+}
 
 #[allow(unused)]
 pub struct TaskGlobalStorage<T> {
@@ -113,5 +146,26 @@ mod tests {
             })
         ));
         assert!(matches!(storage.pop(), None));
+    }
+
+    #[tokio::test]
+    async fn future_enables_storage() {
+        thread_local!(static STORAGE: TaskGlobalStorage<Context> = TaskGlobalStorage::default());
+        struct Context;
+        impl TaskGlobal for Context {
+            fn key() -> &'static LocalKey<TaskGlobalStorage<Self>> {
+                &STORAGE
+            }
+        }
+
+        assert!(STORAGE.with(|storage| storage.head.borrow().is_none()));
+        TaskGlobalFuture::new(
+            async {
+                assert!(STORAGE.with(|storage| storage.head.borrow().is_some()));
+            },
+            Context,
+        )
+        .await;
+        assert!(STORAGE.with(|storage| storage.head.borrow().is_none()));
     }
 }
