@@ -40,11 +40,69 @@ pub trait TaskGlobal: Sized + 'static {
             f(maybe_current.expect("no value stored in task global storage"))
         })
     }
+
+    fn global_chain<F, R>(f: F) -> R
+    where
+        F: FnOnce(TaskGlobalIter<'_, Self>) -> R,
+    {
+        Self::key().with(|storage| f(TaskGlobalIter::new(&storage.head())))
+    }
+
+    fn global_chain_mut<F, R>(f: F) -> R
+    where
+        F: FnOnce(TaskGlobalIterMut<'_, Self>) -> R,
+    {
+        Self::key().with(|storage| f(TaskGlobalIterMut::new(&mut storage.head_mut())))
+    }
 }
 
-pub struct TaskGlobalIter /*<T>*/ {}
+pub struct TaskGlobalIter<'a, T> {
+    current: Option<&'a Box<TaskGlobalNode<T>>>,
+}
 
-pub struct TaskGlobalIterMut /*<T>*/ {}
+impl<'a, T> TaskGlobalIter<'a, T> {
+    fn new(head: &'a Option<Box<TaskGlobalNode<T>>>) -> TaskGlobalIter<'a, T> {
+        TaskGlobalIter {
+            current: head.as_ref(),
+        }
+    }
+}
+
+impl<'a, T> Iterator for TaskGlobalIter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.current.take().map(|current| {
+            let (current, next) = current.as_parts();
+            self.current = next.as_ref();
+            current
+        })
+    }
+}
+
+pub struct TaskGlobalIterMut<'a, T> {
+    current: Option<&'a mut Box<TaskGlobalNode<T>>>,
+}
+
+impl<'a, T> TaskGlobalIterMut<'a, T> {
+    fn new(head: &'a mut Option<Box<TaskGlobalNode<T>>>) -> TaskGlobalIterMut<'a, T> {
+        TaskGlobalIterMut {
+            current: head.as_mut(),
+        }
+    }
+}
+
+impl<'a, T> Iterator for TaskGlobalIterMut<'a, T> {
+    type Item = &'a mut T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.current.take().map(|current| {
+            let (current, next) = current.as_parts_mut();
+            self.current = next.as_mut();
+            current
+        })
+    }
+}
 
 #[pin_project]
 pub struct TaskGlobalFuture<Fut, T> {
@@ -95,6 +153,14 @@ impl<T> TaskGlobalStorage<T> {
         .ok()
     }
 
+    fn head(&self) -> Ref<'_, Option<Box<TaskGlobalNode<T>>>> {
+        self.head.borrow()
+    }
+
+    fn head_mut(&self) -> RefMut<'_, Option<Box<TaskGlobalNode<T>>>> {
+        self.head.borrow_mut()
+    }
+
     fn push(&self, mut node: Box<TaskGlobalNode<T>>) {
         let mut head = self.head.borrow_mut();
         node.parent = head.take();
@@ -128,6 +194,14 @@ impl<T> TaskGlobalNode<T> {
             value,
             parent: None,
         }
+    }
+
+    fn as_parts(&self) -> (&T, &Option<Box<TaskGlobalNode<T>>>) {
+        (&self.value, &self.parent)
+    }
+
+    fn as_parts_mut(&mut self) -> (&mut T, &mut Option<Box<TaskGlobalNode<T>>>) {
+        (&mut self.value, &mut self.parent)
     }
 }
 
@@ -221,17 +295,27 @@ mod tests {
 
         assert!(Context::try_global(|context| context.is_none()));
         assert!(Context::try_global_mut(|context| context.is_none()));
+        assert!(Context::global_chain(|mut c| c.next().is_none()));
+        assert!(Context::global_chain_mut(|mut c| c.next().is_none()));
         TaskGlobalFuture::new(
             async {
                 assert!(Context::try_global(|context| context.is_some()));
                 assert!(Context::try_global_mut(|context| context.is_some()));
                 assert!(Context::global(|context| matches!(context, Context)));
                 assert!(Context::global_mut(|context| matches!(context, Context)));
+                assert!(Context::global_chain(|mut c| {
+                    c.next().is_some() && c.next().is_none()
+                }));
+                assert!(Context::global_chain_mut(
+                    |mut c| c.next().is_some() && c.next().is_none()
+                ));
             },
             Context,
         )
         .await;
         assert!(Context::try_global(|context| context.is_none()));
         assert!(Context::try_global_mut(|context| context.is_none()));
+        assert!(Context::global_chain(|mut c| c.next().is_none()));
+        assert!(Context::global_chain_mut(|mut c| c.next().is_none()));
     }
 }
