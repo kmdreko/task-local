@@ -56,6 +56,17 @@ pub trait TaskGlobal: Sized + 'static {
     }
 }
 
+pub trait TaskGlobalExt {
+    fn with_global<T: TaskGlobal>(self, value: T) -> TaskGlobalFuture<Self, T>
+    where
+        Self: Sized,
+    {
+        TaskGlobalFuture::new(self, value)
+    }
+}
+
+impl<Fut> TaskGlobalExt for Fut where Fut: Future {}
+
 pub struct TaskGlobalIter<'a, T> {
     current: Option<&'a Box<TaskGlobalNode<T>>>,
 }
@@ -317,5 +328,24 @@ mod tests {
         assert!(Context::try_global_mut(|context| context.is_none()));
         assert!(Context::global_chain(|mut c| c.next().is_none()));
         assert!(Context::global_chain_mut(|mut c| c.next().is_none()));
+    }
+
+    #[tokio::test]
+    async fn ext_trait_works() {
+        struct Context;
+        impl TaskGlobal for Context {
+            fn key() -> &'static LocalKey<TaskGlobalStorage<Self>> {
+                thread_local!(static STORAGE: TaskGlobalStorage<Context> = TaskGlobalStorage::default());
+                &STORAGE
+            }
+        }
+
+        assert!(Context::try_global(|context| context.is_none()));
+        async {
+            assert!(Context::global(|context| matches!(context, Context)));
+        }
+        .with_global(Context)
+        .await;
+        assert!(Context::try_global(|context| context.is_none()));
     }
 }
