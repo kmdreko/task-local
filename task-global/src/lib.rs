@@ -57,7 +57,27 @@ impl<T> TaskGlobalNode<T> {
 }
 
 #[allow(unused)]
-struct TaskGlobalNodeGuard /*<T>*/ {}
+struct TaskGlobalNodeGuard<'a, T: 'static> {
+    key: &'static LocalKey<TaskGlobalStorage<T>>,
+    current: &'a mut Option<Box<TaskGlobalNode<T>>>,
+}
+
+#[allow(unused)]
+impl<'a, T: 'static> TaskGlobalNodeGuard<'a, T> {
+    fn new(
+        key: &'static LocalKey<TaskGlobalStorage<T>>,
+        current: &'a mut Option<Box<TaskGlobalNode<T>>>,
+    ) -> TaskGlobalNodeGuard<'a, T> {
+        key.with(|storage| storage.push(current.take().unwrap()));
+        TaskGlobalNodeGuard { key, current }
+    }
+}
+
+impl<'a, T> Drop for TaskGlobalNodeGuard<'a, T> {
+    fn drop(&mut self) {
+        *self.current = Some(self.key.with(|storage| storage.pop().unwrap()));
+    }
+}
 
 #[cfg(test)]
 mod tests {
