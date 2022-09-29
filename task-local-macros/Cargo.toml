@@ -1,5 +1,5 @@
 [package]
-name = "task-global-macros"
+name = "task-local-macros"
 version = "0.1.0"
 edition = "2021"
 

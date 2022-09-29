@@ -1,5 +1,5 @@
 [package]
-name = "task-global"
+name = "task-local"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,12 +7,12 @@ edition = "2021"
 default = ["futures", "macros"]
 
 futures = ["dep:futures"]
-macros = ["dep:task-global-macros"]
+macros = ["dep:task-local-macros"]
 
 [dependencies]
 futures = { version = "0.3.24", default-features = false, optional = true }
 pin-project = "1.0.12"
-task-global-macros = { version = "0.1.0", path = "../task-global-macros", optional = true }
+task-local-macros = { version = "0.1.0", path = "../task-local-macros", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.21.2", features = ["rt", "macros"] }

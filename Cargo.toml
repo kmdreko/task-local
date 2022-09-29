@@ -1,5 +1,5 @@
 [workspace]
 members = [
-    "task-global",
-    "task-global-macros",
+    "task-local",
+    "task-local-macros",
 ]
