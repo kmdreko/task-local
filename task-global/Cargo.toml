@@ -4,10 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["macros"]
+default = ["futures", "macros"]
+
+futures = ["dep:futures"]
 macros = ["dep:task-global-macros"]
 
 [dependencies]
+futures = { version = "0.3.24", default-features = false, optional = true }
 pin-project = "1.0.12"
 task-global-macros = { version = "0.1.0", path = "../task-global-macros", optional = true }
 

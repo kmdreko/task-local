@@ -332,7 +332,7 @@ impl<Fut, T> TaskGlobalFuture<Fut, T> {
 impl<Fut, T> Future for TaskGlobalFuture<Fut, T>
 where
     Fut: Future,
-    T: TaskGlobal + 'static,
+    T: TaskGlobal,
 {
     type Output = Fut::Output;
 
@@ -340,6 +340,17 @@ where
         let this = self.project();
         let _guard = TaskGlobalNodeGuard::new(T::key(), this.value);
         this.inner.poll(cx)
+    }
+}
+
+#[cfg(feature = "futures")]
+impl<Fut, T> futures::future::FusedFuture for TaskGlobalFuture<Fut, T>
+where
+    Fut: futures::future::FusedFuture,
+    T: TaskGlobal,
+{
+    fn is_terminated(&self) -> bool {
+        self.inner.is_terminated()
     }
 }
 
