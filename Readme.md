@@ -27,6 +27,8 @@ async {
 }.with_local(Context::default()).await;
 ```
 
+[Documentation](https://kmdreko.github.io/documentation/task-local/task_local)
+
 ## Scoping
 
 The local value is only available while the annotated task is executing.

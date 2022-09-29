@@ -92,7 +92,7 @@
 //! already implemented as [`tokio::task::LocalKey`](https://docs.rs/tokio/latest/tokio/task/struct.LocalKey.html).
 //! The APIs are different, but largely implement the same functionality. The
 //! tokio implementation uses a macro similar to `thread_local!` and has
-//! synchronous support. The only feature my implementation has over it is
+//! synchronous support. The features my implementation has over it is
 //! mutability and the ability to access the whole stack of task-local values.
 //!
 //! So probably not, but maybe. You can if you want. :)
