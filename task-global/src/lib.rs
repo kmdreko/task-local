@@ -1,3 +1,5 @@
+//! Have you ever thought *"Dang! I sure would love to use global variables in my asynchronous tasks, but with all the thread-hopping and cooperative-multi-tasking that'd be impossible"*?
+
 use std::cell::{Ref, RefCell, RefMut};
 use std::future::Future;
 use std::pin::Pin;
@@ -10,7 +12,7 @@ use pin_project::pin_project;
 pub use task_global_macros::TaskGlobal;
 
 pub trait TaskGlobal: Sized + 'static {
-    fn key() -> &'static LocalKey<TaskGlobalStorage<Self>>;
+    fn key() -> &'static LocalKey<Storage<Self>>;
 
     fn try_global<F, R>(f: F) -> R
     where
@@ -46,16 +48,16 @@ pub trait TaskGlobal: Sized + 'static {
 
     fn global_chain<F, R>(f: F) -> R
     where
-        F: FnOnce(TaskGlobalIter<'_, Self>) -> R,
+        F: FnOnce(StorageIter<'_, Self>) -> R,
     {
-        Self::key().with(|storage| f(TaskGlobalIter::new(&storage.head())))
+        Self::key().with(|storage| f(StorageIter::new(&storage.head())))
     }
 
     fn global_chain_mut<F, R>(f: F) -> R
     where
-        F: FnOnce(TaskGlobalIterMut<'_, Self>) -> R,
+        F: FnOnce(StorageIterMut<'_, Self>) -> R,
     {
-        Self::key().with(|storage| f(TaskGlobalIterMut::new(&mut storage.head_mut())))
+        Self::key().with(|storage| f(StorageIterMut::new(&mut storage.head_mut())))
     }
 }
 
@@ -70,49 +72,49 @@ pub trait TaskGlobalExt {
 
 impl<Fut> TaskGlobalExt for Fut where Fut: Future {}
 
-pub struct TaskGlobalIter<'a, T> {
-    current: Option<&'a Box<TaskGlobalNode<T>>>,
+pub struct StorageIter<'a, T> {
+    current: Option<&'a TaskGlobalNode<T>>,
 }
 
-impl<'a, T> TaskGlobalIter<'a, T> {
-    fn new(head: &'a Option<Box<TaskGlobalNode<T>>>) -> TaskGlobalIter<'a, T> {
-        TaskGlobalIter {
-            current: head.as_ref(),
+impl<'a, T> StorageIter<'a, T> {
+    fn new(head: &'a Option<Box<TaskGlobalNode<T>>>) -> StorageIter<'a, T> {
+        StorageIter {
+            current: head.as_deref(),
         }
     }
 }
 
-impl<'a, T> Iterator for TaskGlobalIter<'a, T> {
+impl<'a, T> Iterator for StorageIter<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.current.take().map(|current| {
             let (current, next) = current.as_parts();
-            self.current = next.as_ref();
+            self.current = next.as_deref();
             current
         })
     }
 }
 
-pub struct TaskGlobalIterMut<'a, T> {
-    current: Option<&'a mut Box<TaskGlobalNode<T>>>,
+pub struct StorageIterMut<'a, T> {
+    current: Option<&'a mut TaskGlobalNode<T>>,
 }
 
-impl<'a, T> TaskGlobalIterMut<'a, T> {
-    fn new(head: &'a mut Option<Box<TaskGlobalNode<T>>>) -> TaskGlobalIterMut<'a, T> {
-        TaskGlobalIterMut {
-            current: head.as_mut(),
+impl<'a, T> StorageIterMut<'a, T> {
+    fn new(head: &'a mut Option<Box<TaskGlobalNode<T>>>) -> StorageIterMut<'a, T> {
+        StorageIterMut {
+            current: head.as_deref_mut(),
         }
     }
 }
 
-impl<'a, T> Iterator for TaskGlobalIterMut<'a, T> {
+impl<'a, T> Iterator for StorageIterMut<'a, T> {
     type Item = &'a mut T;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.current.take().map(|current| {
             let (current, next) = current.as_parts_mut();
-            self.current = next.as_mut();
+            self.current = next.as_deref_mut();
             current
         })
     }
@@ -142,17 +144,17 @@ where
     type Output = Fut::Output;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = self.project();
-        let _guard = TaskGlobalNodeGuard::new(T::key(), &mut this.value);
+        let this = self.project();
+        let _guard = TaskGlobalNodeGuard::new(T::key(), this.value);
         this.inner.poll(cx)
     }
 }
 
-pub struct TaskGlobalStorage<T> {
+pub struct Storage<T> {
     head: RefCell<Option<Box<TaskGlobalNode<T>>>>,
 }
 
-impl<T> TaskGlobalStorage<T> {
+impl<T> Storage<T> {
     fn current(&self) -> Option<Ref<'_, T>> {
         Ref::filter_map(self.head.borrow(), |head| {
             head.as_ref().map(|node| &node.value)
@@ -189,7 +191,7 @@ impl<T> TaskGlobalStorage<T> {
     }
 }
 
-impl<T> Default for TaskGlobalStorage<T> {
+impl<T> Default for Storage<T> {
     fn default() -> Self {
         Self {
             head: RefCell::new(None),
@@ -220,13 +222,13 @@ impl<T> TaskGlobalNode<T> {
 }
 
 struct TaskGlobalNodeGuard<'a, T: 'static> {
-    key: &'static LocalKey<TaskGlobalStorage<T>>,
+    key: &'static LocalKey<Storage<T>>,
     current: &'a mut Option<Box<TaskGlobalNode<T>>>,
 }
 
 impl<'a, T: 'static> TaskGlobalNodeGuard<'a, T> {
     fn new(
-        key: &'static LocalKey<TaskGlobalStorage<T>>,
+        key: &'static LocalKey<Storage<T>>,
         current: &'a mut Option<Box<TaskGlobalNode<T>>>,
     ) -> TaskGlobalNodeGuard<'a, T> {
         key.with(|storage| storage.push(current.take().unwrap()));
@@ -246,7 +248,7 @@ mod tests {
 
     #[test]
     fn storage_can_push_and_pop() {
-        let storage = TaskGlobalStorage::default();
+        let storage = Storage::default();
 
         storage.push(Box::new(TaskGlobalNode::new(1)));
         storage.push(Box::new(TaskGlobalNode::new(2)));
@@ -278,10 +280,10 @@ mod tests {
 
     #[tokio::test]
     async fn future_enables_storage() {
-        thread_local!(static STORAGE: TaskGlobalStorage<Context> = TaskGlobalStorage::default());
+        thread_local!(static STORAGE: Storage<Context> = Storage::default());
         struct Context;
         impl TaskGlobal for Context {
-            fn key() -> &'static LocalKey<TaskGlobalStorage<Self>> {
+            fn key() -> &'static LocalKey<Storage<Self>> {
                 &STORAGE
             }
         }
@@ -301,8 +303,8 @@ mod tests {
     async fn task_global_trait_accesses_value() {
         struct Context;
         impl TaskGlobal for Context {
-            fn key() -> &'static LocalKey<TaskGlobalStorage<Self>> {
-                thread_local!(static STORAGE: TaskGlobalStorage<Context> = TaskGlobalStorage::default());
+            fn key() -> &'static LocalKey<Storage<Self>> {
+                thread_local!(static STORAGE: Storage<Context> = Storage::default());
                 &STORAGE
             }
         }
@@ -337,8 +339,8 @@ mod tests {
     async fn ext_trait_works() {
         struct Context;
         impl TaskGlobal for Context {
-            fn key() -> &'static LocalKey<TaskGlobalStorage<Self>> {
-                thread_local!(static STORAGE: TaskGlobalStorage<Context> = TaskGlobalStorage::default());
+            fn key() -> &'static LocalKey<Storage<Self>> {
+                thread_local!(static STORAGE: Storage<Context> = Storage::default());
                 &STORAGE
             }
         }
