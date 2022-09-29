@@ -9,7 +9,7 @@
 //! and access them from anywhere within the task:
 //!
 //! ```
-//! use task_local::{TaskLocal, TaskLocalExt};
+//! use task_local::{TaskLocal, WithLocalExt};
 //!
 //! #[derive(Default, TaskLocal)]
 //! struct Context {
@@ -38,7 +38,7 @@
 //! set from the most-recently set scope.
 //!
 //! ```
-//! # use task_local::{TaskLocal, TaskLocalExt};
+//! # use task_local::{TaskLocal, WithLocalExt};
 //! # #[derive(Default, TaskLocal)]
 //! # struct Context { value: i32 }
 //! # async fn f() {
@@ -109,7 +109,7 @@ use pin_project::pin_project;
 #[cfg(feature = "macros")]
 pub use task_local_macros::TaskLocal;
 
-/// Implementing this trait allows the type to be used with [`TaskLocalExt::with_local`] on
+/// Implementing this trait allows the type to be used with [`WithLocalExt::with_local`] on
 /// asynchronous tasks and be accessible via the other associated methods while
 /// executing those tasks.
 ///
@@ -231,7 +231,7 @@ pub trait TaskLocal: Sized + 'static {
 
 /// An extension type for [`Future`]s to annotate them with a [`TaskLocal`]
 /// type.
-pub trait TaskLocalExt {
+pub trait WithLocalExt {
     /// This will construct a [`Future`] type that stores this value and will
     /// make it available to the [`TaskLocal`] methods when executing.
     fn with_local<T: TaskLocal>(self, value: T) -> TaskLocalFuture<Self, T>
@@ -242,7 +242,7 @@ pub trait TaskLocalExt {
     }
 }
 
-impl<Fut> TaskLocalExt for Fut where Fut: Future {}
+impl<Fut> WithLocalExt for Fut where Fut: Future {}
 
 /// An error that is returned from the `TaskLocal::try_*` methods if the
 /// local value cannot be accessed.

@@ -1,4 +1,4 @@
-use task_local::{TaskLocal, TaskLocalExt};
+use task_local::{TaskLocal, WithLocalExt};
 
 #[tokio::test]
 async fn derive_macro_works() {
