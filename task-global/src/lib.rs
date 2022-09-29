@@ -6,6 +6,9 @@ use std::thread::LocalKey;
 
 use pin_project::pin_project;
 
+#[cfg(feature = "macros")]
+pub use task_global_macros::TaskGlobal;
+
 pub trait TaskGlobal: Sized + 'static {
     fn key() -> &'static LocalKey<TaskGlobalStorage<Self>>;
 

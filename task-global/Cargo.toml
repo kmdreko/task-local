@@ -3,8 +3,13 @@ name = "task-global"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["macros"]
+macros = ["dep:task-global-macros"]
+
 [dependencies]
 pin-project = "1.0.12"
+task-global-macros = { version = "0.1.0", path = "../task-global-macros", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.21.2", features = ["rt", "macros"] }
