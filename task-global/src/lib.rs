@@ -42,7 +42,7 @@
 //! # #[derive(Default, TaskGlobal)]
 //! # struct Context { value: i32 }
 //! # async fn f() {
-//! Context::try_global(|ctx| assert!(ctx.is_none()));
+//! assert!(Context::try_global(|_ctx| {}).is_err());
 //!
 //! async {
 //!     Context::global(|ctx| assert!(ctx.value == 0));
@@ -60,7 +60,7 @@
 //!
 //! }.with_global(Context::default()).await;
 //!
-//! Context::try_global(|ctx| assert!(ctx.is_none()));
+//! assert!(Context::try_global(|_ctx| {}).is_err());
 //! # }
 //! ```
 //!
@@ -144,24 +144,22 @@ pub trait TaskGlobal: Sized + 'static {
     /// ```
     fn key() -> &'static LocalKey<Storage<Self>>;
 
-    /// This method attempts to call the function with the currently stored
-    /// value but will pass `None` if outside the execution of an annotated
-    /// task.
-    fn try_global<F, R>(f: F) -> R
+    /// This method attempts to call the function with a reference to the
+    /// currently stored value or return an error if it cannot be accessed.
+    fn try_global<F, R>(f: F) -> Result<R, StorageError>
     where
-        F: FnOnce(Option<&Self>) -> R,
+        F: FnOnce(&Self) -> R,
     {
-        Self::key().with(|storage| f(storage.current().as_deref()))
+        Self::key().with(|storage| storage.current().map(|value| f(&value)))
     }
 
-    /// This method attempts to call the function with the currently stored
-    /// value as a mutable reference but will pass `None` if outside the
-    /// execution of an annotated task.
-    fn try_global_mut<F, R>(f: F) -> R
+    /// This method attempts to call the function with a mutable reference to
+    /// the currently stored value or return an error if it cannot be accessed.
+    fn try_global_mut<F, R>(f: F) -> Result<R, StorageError>
     where
-        F: FnOnce(Option<&mut Self>) -> R,
+        F: FnOnce(&mut Self) -> R,
     {
-        Self::key().with(|storage| f(storage.current_mut().as_deref_mut()))
+        Self::key().with(|storage| storage.current_mut().map(|mut value| f(&mut value)))
     }
 
     /// This method will call the function with a reference to the currently
@@ -171,9 +169,7 @@ pub trait TaskGlobal: Sized + 'static {
     where
         F: FnOnce(&Self) -> R,
     {
-        Self::try_global(|maybe_current| {
-            f(maybe_current.expect("no value stored in task global storage"))
-        })
+        Self::try_global(f).expect("cannot access the value in task global storage")
     }
 
     /// This method will call the function with a mutable reference to the
@@ -183,8 +179,33 @@ pub trait TaskGlobal: Sized + 'static {
     where
         F: FnOnce(&mut Self) -> R,
     {
-        Self::try_global_mut(|maybe_current| {
-            f(maybe_current.expect("no value stored in task global storage"))
+        Self::try_global_mut(f).expect("cannot access the value in task global storage")
+    }
+
+    /// This method attempts to call the function with an iterator yielding
+    /// references to all the currently stored values, in most-recently-annotated
+    /// order or will return an error if it cannot be accessed. This will not
+    /// return `StorageError::NoValue`, the iterator will simply be empty.
+    fn try_global_chain<F, R>(f: F) -> Result<R, StorageError>
+    where
+        F: FnOnce(StorageIter<'_, Self>) -> R,
+    {
+        Self::key().with(|storage| storage.head().map(|head| f(StorageIter::new(&head))))
+    }
+
+    /// This method attempts to call the function with an iterator yielding
+    /// mutable references to all the currently stored values, in
+    /// most-recently-annotated order or will return an error if it cannot be
+    /// accessed. This will not return `StorageError::NoValue`, the iterator
+    /// will simply be empty.
+    fn try_global_chain_mut<F, R>(f: F) -> Result<R, StorageError>
+    where
+        F: FnOnce(StorageIterMut<'_, Self>) -> R,
+    {
+        Self::key().with(|storage| {
+            storage
+                .head_mut()
+                .map(|mut head| f(StorageIterMut::new(&mut head)))
         })
     }
 
@@ -194,7 +215,7 @@ pub trait TaskGlobal: Sized + 'static {
     where
         F: FnOnce(StorageIter<'_, Self>) -> R,
     {
-        Self::key().with(|storage| f(StorageIter::new(&storage.head())))
+        Self::try_global_chain(f).expect("cannot access task global storage")
     }
 
     /// This method will call the function with an iterator yielding mutable
@@ -204,7 +225,7 @@ pub trait TaskGlobal: Sized + 'static {
     where
         F: FnOnce(StorageIterMut<'_, Self>) -> R,
     {
-        Self::key().with(|storage| f(StorageIterMut::new(&mut storage.head_mut())))
+        Self::try_global_chain_mut(f).expect("cannot access task global storage")
     }
 }
 
@@ -222,6 +243,20 @@ pub trait TaskGlobalExt {
 }
 
 impl<Fut> TaskGlobalExt for Fut where Fut: Future {}
+
+/// An error that is returned from the `TaskGlobal::try_*` methods if the
+/// "global" value cannot be accessed.
+#[derive(Copy, Clone, Debug)]
+pub enum StorageError {
+    /// There is no value in storage. This means that you are not in a thread of
+    /// execution that is not wrapped in a `TaskGlobalFuture`.
+    NoValue,
+
+    /// The storage cannot be accessed because it is currently locked. This can
+    /// happen if you call the free methods recursively and at least one of them
+    /// is accessing the storage mutably.
+    Locked,
+}
 
 /// An iterator that yields references to all the currently accessible "global"
 /// values.
@@ -318,26 +353,32 @@ pub struct Storage<T> {
 }
 
 impl<T> Storage<T> {
-    fn current(&self) -> Option<Ref<'_, T>> {
-        Ref::filter_map(self.head.borrow(), |head| {
-            head.as_ref().map(|node| &node.value)
-        })
-        .ok()
+    fn current(&self) -> Result<Ref<'_, T>, StorageError> {
+        use StorageError::*;
+
+        let head = self.head.try_borrow().map_err(|_| Locked)?;
+        let value = Ref::filter_map(head, |head| head.as_ref().map(|node| &node.value))
+            .map_err(|_| NoValue)?;
+
+        Ok(value)
     }
 
-    fn current_mut(&self) -> Option<RefMut<'_, T>> {
-        RefMut::filter_map(self.head.borrow_mut(), |head| {
-            head.as_mut().map(|node| &mut node.value)
-        })
-        .ok()
+    fn current_mut(&self) -> Result<RefMut<'_, T>, StorageError> {
+        use StorageError::*;
+
+        let head = self.head.try_borrow_mut().map_err(|_| Locked)?;
+        let value = RefMut::filter_map(head, |head| head.as_mut().map(|node| &mut node.value))
+            .map_err(|_| NoValue)?;
+
+        Ok(value)
     }
 
-    fn head(&self) -> Ref<'_, Option<Box<TaskGlobalNode<T>>>> {
-        self.head.borrow()
+    fn head(&self) -> Result<Ref<'_, Option<Box<TaskGlobalNode<T>>>>, StorageError> {
+        self.head.try_borrow().map_err(|_| StorageError::Locked)
     }
 
-    fn head_mut(&self) -> RefMut<'_, Option<Box<TaskGlobalNode<T>>>> {
-        self.head.borrow_mut()
+    fn head_mut(&self) -> Result<RefMut<'_, Option<Box<TaskGlobalNode<T>>>>, StorageError> {
+        self.head.try_borrow_mut().map_err(|_| StorageError::Locked)
     }
 
     fn push(&self, mut node: Box<TaskGlobalNode<T>>) {
@@ -472,14 +513,14 @@ mod tests {
             }
         }
 
-        assert!(Context::try_global(|context| context.is_none()));
-        assert!(Context::try_global_mut(|context| context.is_none()));
+        assert!(Context::try_global(|_| {}).is_err());
+        assert!(Context::try_global_mut(|_| {}).is_err());
         assert!(Context::global_chain(|mut c| c.next().is_none()));
         assert!(Context::global_chain_mut(|mut c| c.next().is_none()));
         TaskGlobalFuture::new(
             async {
-                assert!(Context::try_global(|context| context.is_some()));
-                assert!(Context::try_global_mut(|context| context.is_some()));
+                assert!(Context::try_global(|_| {}).is_ok());
+                assert!(Context::try_global_mut(|_| {}).is_ok());
                 assert!(Context::global(|context| matches!(context, Context)));
                 assert!(Context::global_mut(|context| matches!(context, Context)));
                 assert!(Context::global_chain(|mut c| {
@@ -492,8 +533,8 @@ mod tests {
             Context,
         )
         .await;
-        assert!(Context::try_global(|context| context.is_none()));
-        assert!(Context::try_global_mut(|context| context.is_none()));
+        assert!(Context::try_global(|_| {}).is_err());
+        assert!(Context::try_global_mut(|_| {}).is_err());
         assert!(Context::global_chain(|mut c| c.next().is_none()));
         assert!(Context::global_chain_mut(|mut c| c.next().is_none()));
     }
@@ -508,12 +549,12 @@ mod tests {
             }
         }
 
-        assert!(Context::try_global(|context| context.is_none()));
+        assert!(Context::try_global(|_| {}).is_err());
         async {
             assert!(Context::global(|context| matches!(context, Context)));
         }
         .with_global(Context)
         .await;
-        assert!(Context::try_global(|context| context.is_none()));
+        assert!(Context::try_global(|_| {}).is_err());
     }
 }
