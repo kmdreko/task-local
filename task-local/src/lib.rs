@@ -3,7 +3,7 @@
 //! cooperative-multi-tasking that'd be impossible"*? Well lament no more!
 //! Because now you can...
 //!
-//! # Task Locals
+//! # Task Local Variables
 //!
 //! The [`TaskLocal`] trait allows you to add "local" variables to your tasks
 //! and access them from anywhere within the task:
@@ -83,12 +83,19 @@
 //!
 //! ## Should I actually use this?
 //!
-//! If you have the need for it.
-//!
 //! You should follow the same general advice for global and thread-local
 //! variables and avoid them if there is an alternative. However, sometimes
 //! using a local variable is ergonomically advantageous, and this gives you
 //! that option in an asynchronous context.
+//!
+//! However, it was only after creating this library that I found that it was
+//! already implemented as [`tokio::task::LocalKey`](https://docs.rs/tokio/latest/tokio/task/struct.LocalKey.html).
+//! The APIs are different, but largely implement the same functionality. The
+//! tokio implementation uses a macro similar to `thread_local!` and has
+//! synchronous support. The only feature my implementation has over it is
+//! mutability and the ability to access the whole stack of task-local values.
+//!
+//! So probably not, but maybe. You can if you want. :)
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::future::Future;
