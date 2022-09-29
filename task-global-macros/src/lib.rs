@@ -1,3 +1,6 @@
+//! This crate provides a derive macro for the task-global crate. This should
+//! not be used directly.
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Error};
